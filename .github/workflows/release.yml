@@ -1,0 +1,73 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            nome: jqc-windows-x64-cpu.exe
+            features: ""
+          - os: windows-latest
+            nome: jqc-windows-x64-vulkan.exe
+            features: vulkan
+          - os: ubuntu-latest
+            nome: jqc-linux-x64-cpu
+            features: ""
+          - os: ubuntu-latest
+            nome: jqc-linux-x64-vulkan
+            features: vulkan
+          - os: macos-latest
+            nome: jqc-macos-arm64
+            features: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Vulkan SDK
+        if: matrix.features == 'vulkan'
+        uses: humbletim/setup-vulkan-sdk@v1.2.1
+        with:
+          vulkan-query-version: latest
+          vulkan-components: Vulkan-Headers, Vulkan-Loader, Glslang, SPIRV-Tools
+          vulkan-use-cache: true
+      - name: Build
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.features }}" ]; then
+            cargo build --release --features "${{ matrix.features }}"
+          else
+            cargo build --release
+          fi
+      - name: Renomear e sha256
+        shell: bash
+        run: |
+          fonte=target/release/jqc
+          [ -f "$fonte.exe" ] && fonte="$fonte.exe"
+          cp "$fonte" "${{ matrix.nome }}"
+          python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest(), sys.argv[1])" "${{ matrix.nome }}" > "${{ matrix.nome }}.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.nome }}
+          path: |
+            ${{ matrix.nome }}
+            ${{ matrix.nome }}.sha256
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            jqc-*

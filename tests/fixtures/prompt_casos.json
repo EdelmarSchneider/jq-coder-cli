@@ -1,0 +1,50 @@
+[
+  {
+    "pedido_nl": "get the id of every order",
+    "amostra_json": "{\"orders\": [{\"id\": 1, \"status\": \"done\"}]}",
+    "system": "You translate natural-language requests into jq filters. Reply with only the jq filter.",
+    "user": "get the id of every order\n\nJSON sample:\n{\"orders\": [{\"id\": 1, \"status\": \"done\"}]}"
+  },
+  {
+    "pedido_nl": "some o total de todos os pedidos",
+    "amostra_json": "{\"pedidos\": [{\"total\": 120.5}, {\"total\": 40.0}]}",
+    "system": "You translate natural-language requests into jq filters. Reply with only the jq filter.",
+    "user": "some o total de todos os pedidos\n\nJSON sample:\n{\"pedidos\": [{\"total\": 120.5}, {\"total\": 40.0}]}"
+  },
+  {
+    "pedido_nl": "remova o campo endereço de cada usuário",
+    "amostra_json": "{\"usuários\": [{\"nome\": \"João\", \"endereço\": \"rua á\"}]}",
+    "system": "You translate natural-language requests into jq filters. Reply with only the jq filter.",
+    "user": "remova o campo endereço de cada usuário\n\nJSON sample:\n{\"usuários\": [{\"nome\": \"João\", \"endereço\": \"rua á\"}]}"
+  },
+  {
+    "pedido_nl": "count items",
+    "amostra_json": "[]",
+    "system": "You translate natural-language requests into jq filters. Reply with only the jq filter.",
+    "user": "count items\n\nJSON sample:\n[]"
+  },
+  {
+    "pedido_nl": "pedido com \"aspas\" e 'apóstrofos'",
+    "amostra_json": "{\"a\": 1}",
+    "system": "You translate natural-language requests into jq filters. Reply with only the jq filter.",
+    "user": "pedido com \"aspas\" e 'apóstrofos'\n\nJSON sample:\n{\"a\": 1}"
+  },
+  {
+    "pedido_nl": "pedido\ncom quebra de linha",
+    "amostra_json": "{\"a\": 1}",
+    "system": "You translate natural-language requests into jq filters. Reply with only the jq filter.",
+    "user": "pedido\ncom quebra de linha\n\nJSON sample:\n{\"a\": 1}"
+  },
+  {
+    "pedido_nl": "keep unicode intact",
+    "amostra_json": "{\"emoji\": \"🎉\", \"cjk\": \"亿\", \"tab\": \"a\\tb\"}",
+    "system": "You translate natural-language requests into jq filters. Reply with only the jq filter.",
+    "user": "keep unicode intact\n\nJSON sample:\n{\"emoji\": \"🎉\", \"cjk\": \"亿\", \"tab\": \"a\\tb\"}"
+  },
+  {
+    "pedido_nl": "amostra com espaçamento estranho",
+    "amostra_json": "{ \"a\" :  1 ,\n  \"b\": [ 1, 2 ] }",
+    "system": "You translate natural-language requests into jq filters. Reply with only the jq filter.",
+    "user": "amostra com espaçamento estranho\n\nJSON sample:\n{ \"a\" :  1 ,\n  \"b\": [ 1, 2 ] }"
+  }
+]

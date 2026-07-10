@@ -1,0 +1,59 @@
+[
+  {
+    "fatia": "humana",
+    "itens": 30,
+    "pares": 60,
+    "jaq_ok": 60,
+    "controle_jq_falhou": 0,
+    "divergencias": []
+  },
+  {
+    "fatia": "in-dist",
+    "itens": 200,
+    "pares": 1000,
+    "jaq_ok": 995,
+    "controle_jq_falhou": 0,
+    "divergencias": [
+      {
+        "familia": ".[] | [.{S}, .{G}] | join(\",\")",
+        "programa": ".[] | [.active, .rating] | join(\",\")",
+        "jaq_status": "ok",
+        "jaq_saida": "\"202,null\"\n\"29,null\"\n\"758,null\"",
+        "ouro": "\"202,\"\n\"29,\"\n\"758,\"",
+        "controle_jq_reproduz_ouro": true
+      },
+      {
+        "familia": ".[] | [.{S}, .{G}] | join(\",\")",
+        "programa": ".[] | [.active, .rating] | join(\",\")",
+        "jaq_status": "ok",
+        "jaq_saida": "\"811,null\"\n\"418,null\"\n\"480,null\"",
+        "ouro": "\"811,\"\n\"418,\"\n\"480,\"",
+        "controle_jq_reproduz_ouro": true
+      },
+      {
+        "familia": ".[] | [.{S}, .{G}] | join(\",\")",
+        "programa": ".[] | [.active, .rating] | join(\",\")",
+        "jaq_status": "ok",
+        "jaq_saida": "\"952,null\"\n\"376,null\"\n\"148,null\"",
+        "ouro": "\"952,\"\n\"376,\"\n\"148,\"",
+        "controle_jq_reproduz_ouro": true
+      },
+      {
+        "familia": ".[] | [.{S}, .{G}] | join(\",\")",
+        "programa": ".[] | [.active, .rating] | join(\",\")",
+        "jaq_status": "ok",
+        "jaq_saida": "\"559,null\"\n\"639,null\"\n\"449,null\"",
+        "ouro": "\"559,\"\n\"639,\"\n\"449,\"",
+        "controle_jq_reproduz_ouro": true
+      },
+      {
+        "familia": ".[] | [.{S}, .{G}] | join(\",\")",
+        "programa": ".[] | [.active, .rating] | join(\",\")",
+        "jaq_status": "ok",
+        "jaq_saida": "\"170,null\"\n\"696,null\"\n\"629,null\"",
+        "ouro": "\"170,\"\n\"696,\"\n\"629,\"",
+        "controle_jq_reproduz_ouro": true
+      }
+    ]
+  }
+]

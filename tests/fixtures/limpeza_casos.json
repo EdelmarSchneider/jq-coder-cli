@@ -1,0 +1,74 @@
+[
+  {
+    "entrada": ".foo",
+    "esperado": ".foo"
+  },
+  {
+    "entrada": "  .foo | .bar  ",
+    "esperado": ".foo | .bar"
+  },
+  {
+    "entrada": "<think>raciocínio</think>.foo",
+    "esperado": ".foo"
+  },
+  {
+    "entrada": "<think>multi\nlinha</think>\n.foo | length",
+    "esperado": ".foo | length"
+  },
+  {
+    "entrada": "<think>truncado sem fechar .foo",
+    "esperado": ""
+  },
+  {
+    "entrada": "```jq\n.foo\n```",
+    "esperado": ".foo"
+  },
+  {
+    "entrada": "```\n.foo | select(.a == \"b\")\n```",
+    "esperado": ".foo | select(.a == \"b\")"
+  },
+  {
+    "entrada": "```jq\nlinha1 |\nlinha2\n```",
+    "esperado": "linha1 |\nlinha2"
+  },
+  {
+    "entrada": "\".foo\"",
+    "esperado": ".foo"
+  },
+  {
+    "entrada": "'.foo'",
+    "esperado": ".foo"
+  },
+  {
+    "entrada": "\"",
+    "esperado": "\""
+  },
+  {
+    "entrada": "\"\"",
+    "esperado": ""
+  },
+  {
+    "entrada": "\"foo\" + \"bar\"",
+    "esperado": "foo\" + \"bar"
+  },
+  {
+    "entrada": "<think>a</think>```jq\n\".foo\"\n```",
+    "esperado": ".foo"
+  },
+  {
+    "entrada": "`.foo`",
+    "esperado": "`.foo`"
+  },
+  {
+    "entrada": "",
+    "esperado": ""
+  },
+  {
+    "entrada": "   ",
+    "esperado": ""
+  },
+  {
+    "entrada": ".foo # comentário unicode ção",
+    "esperado": ".foo # comentário unicode ção"
+  }
+]
