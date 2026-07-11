@@ -44,10 +44,15 @@ jobs:
       - name: MSVC no PATH (ninja)
         if: matrix.features == 'vulkan' && runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
+      # CARGO_TARGET_DIR curto: o ExternalProject aninhado do vulkan-shaders-gen
+      # estoura o MAX_PATH de 260 chars do Windows dentro de target/ (LNK1104
+      # no manifest do try_compile do CMake).
       - name: Gerador Ninja no vulkan Windows
         if: matrix.features == 'vulkan' && runner.os == 'Windows'
         shell: bash
-        run: echo "CMAKE_GENERATOR=Ninja" >> "$GITHUB_ENV"
+        run: |
+          echo "CMAKE_GENERATOR=Ninja" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_DIR=C:/t" >> "$GITHUB_ENV"
       # pwsh, nao bash: o Git Bash poe /usr/bin na frente do PATH e o link.exe
       # do coreutils sombreia o linker da MSVC quando o ambiente dev esta ativo.
       - name: Build (vulkan no Windows)
@@ -66,7 +71,7 @@ jobs:
       - name: Renomear e sha256
         shell: bash
         run: |
-          fonte=target/release/jqc
+          fonte="${CARGO_TARGET_DIR:-target}/release/jqc"
           [ -f "$fonte.exe" ] && fonte="$fonte.exe"
           cp "$fonte" "${{ matrix.nome }}"
           python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest(), sys.argv[1])" "${{ matrix.nome }}" > "${{ matrix.nome }}.sha256"
