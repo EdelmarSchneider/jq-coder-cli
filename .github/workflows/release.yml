@@ -37,6 +37,17 @@ jobs:
         uses: jakoch/install-vulkan-sdk-action@v1
         with:
           cache: true
+      # O gerador Visual Studio corre os passos do ExternalProject
+      # vulkan-shaders-gen fora de ordem (install antes do build terminar);
+      # Ninja serializa as dependencias corretamente. Precisa do cl.exe no
+      # PATH, dai o msvc-dev-cmd.
+      - name: MSVC no PATH (ninja)
+        if: matrix.features == 'vulkan' && runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Gerador Ninja no vulkan Windows
+        if: matrix.features == 'vulkan' && runner.os == 'Windows'
+        shell: bash
+        run: echo "CMAKE_GENERATOR=Ninja" >> "$GITHUB_ENV"
       - name: Build
         shell: bash
         run: |
