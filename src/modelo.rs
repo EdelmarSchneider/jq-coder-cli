@@ -5,8 +5,8 @@
 use std::path::PathBuf;
 
 pub const REPO: &str = "DominuZ/jq-coder-0.6B";
-pub const REVISAO_PINADA: &str = "5f175113a93cdf4b22039b748e15247cdfb08cb1";
-pub const ARQUIVO_GGUF: &str = "jq-coder-v13-release-Q8_0.gguf";
+pub const REVISAO_PINADA: &str = "71b8215ccc154d1d88c43a6094faa76bed7bad9f";
+pub const ARQUIVO_GGUF: &str = "jq-coder-v14-release-Q8_0.gguf";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ErroModelo {
