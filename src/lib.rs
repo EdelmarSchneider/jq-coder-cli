@@ -3,6 +3,7 @@
 //! arquitetura estão em docs/DECISIONS.md.
 
 pub mod executor;
+pub mod gravar;
 pub mod inferencia;
 pub mod modelo;
 pub mod prompt;
