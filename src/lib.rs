@@ -7,3 +7,4 @@ pub mod gravar;
 pub mod inferencia;
 pub mod modelo;
 pub mod prompt;
+pub mod repl;
