@@ -6,6 +6,8 @@
 //! for exatamente UM documento JSON: um stream de 2+ valores ou uma saída
 //! vazia não têm forma de arquivo.
 
+use std::io::{BufRead, Write};
+
 #[derive(Debug, thiserror::Error)]
 pub enum ErroGravacao {
     #[error("the filter produced no output — nothing to write")]
@@ -51,6 +53,54 @@ pub fn formatar_para_arquivo(doc: &serde_json::Value) -> String {
     let mut texto = serde_json::to_string_pretty(doc).unwrap_or_else(|_| doc.to_string());
     texto.push('\n');
     texto
+}
+
+/// Diff posicional linha a linha (não é LCS — para JSON canônico pretty dos
+/// dois lados, divergência posicional é o que interessa; um diff estrutural
+/// seria dependência nova por pouco ganho). Vazio ⇢ conteúdos idênticos.
+pub fn diff_resumido(atual: &str, proposto: &str, max_divergencias: usize) -> String {
+    let a: Vec<&str> = atual.lines().collect();
+    let p: Vec<&str> = proposto.lines().collect();
+    let mut linhas = Vec::new();
+    let mut divergencias = 0usize;
+    let mut ocultas = 0usize;
+    for i in 0..a.len().max(p.len()) {
+        let la = a.get(i);
+        let lp = p.get(i);
+        if la == lp {
+            continue;
+        }
+        if divergencias < max_divergencias {
+            if let Some(l) = la {
+                linhas.push(format!("- {l}"));
+            }
+            if let Some(l) = lp {
+                linhas.push(format!("+ {l}"));
+            }
+        } else {
+            ocultas += 1;
+        }
+        divergencias += 1;
+    }
+    if ocultas > 0 {
+        linhas.push(format!("… ({ocultas} more differing lines)"));
+    }
+    linhas.join("\n")
+}
+
+/// Pergunta e lê UMA linha; só `y`/`yes`/`s`/`sim` (case-insensitive) valem
+/// sim — default é NÃO, como todo gate de gravação deve ser.
+pub fn confirmar<R: BufRead, W: Write>(entrada: &mut R, saida: &mut W, pergunta: &str) -> bool {
+    let _ = write!(saida, "{pergunta}");
+    let _ = saida.flush();
+    let mut linha = String::new();
+    if entrada.read_line(&mut linha).is_err() {
+        return false;
+    }
+    matches!(
+        linha.trim().to_lowercase().as_str(),
+        "y" | "yes" | "s" | "sim"
+    )
 }
 
 #[cfg(test)]
@@ -110,5 +160,53 @@ mod testes {
         let texto = formatar_para_arquivo(&doc);
         assert!(texto.ends_with('\n'));
         assert!(texto.contains("  \"a\": 1"));
+    }
+
+    #[test]
+    fn diff_mostra_linhas_divergentes_com_prefixo() {
+        let d = diff_resumido("{\n  \"a\": 1\n}", "{\n  \"a\": 2\n}", 10);
+        assert!(d.contains("- "));
+        assert!(d.contains("+ "));
+        assert!(d.contains("\"a\": 1"));
+        assert!(d.contains("\"a\": 2"));
+    }
+
+    #[test]
+    fn diff_iguais_e_vazio() {
+        assert_eq!(diff_resumido("x", "x", 10), "");
+    }
+
+    #[test]
+    fn diff_respeita_o_teto_e_anuncia_o_resto() {
+        let atual: String = (0..50).map(|i| format!("{i}\n")).collect();
+        let proposto: String = (0..50).map(|i| format!("{}\n", i + 1000)).collect();
+        let d = diff_resumido(&atual, &proposto, 5);
+        assert!(d.contains("more differing lines"));
+        assert_eq!(d.matches("- ").count(), 5);
+    }
+
+    #[test]
+    fn confirmar_aceita_y_e_s_e_recusa_o_resto() {
+        use std::io::Cursor;
+        for (resposta, esperado) in [
+            ("y\n", true),
+            ("s\n", true),
+            ("Y\n", true),
+            ("n\n", false),
+            ("\n", false),
+            ("yes\n", true),
+        ] {
+            let mut entrada = Cursor::new(resposta.as_bytes().to_vec());
+            let mut saida = Vec::new();
+            assert_eq!(
+                confirmar(&mut entrada, &mut saida, "write changes? [y/N] "),
+                esperado,
+                "resposta {resposta:?}"
+            );
+        }
+        let mut entrada = Cursor::new(b"y\n".to_vec());
+        let mut saida = Vec::new();
+        confirmar(&mut entrada, &mut saida, "write changes? [y/N] ");
+        assert!(String::from_utf8_lossy(&saida).contains("write changes?"));
     }
 }
