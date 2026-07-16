@@ -29,7 +29,15 @@ pub fn documento_unico(saida_execucao: &str) -> Result<serde_json::Value, ErroGr
         Some(Err(erro)) => return Err(ErroGravacao::SaidaInvalida(erro.to_string())),
         Some(Ok(valor)) => valor,
     };
-    let restantes = stream.filter(Result::is_ok).count();
+    // Falhar alto no tail: um erro de parse depois do primeiro documento
+    // significa saída malformada — engolir isso e gravar seria trair o gate.
+    let mut restantes = 0usize;
+    for item in stream {
+        match item {
+            Err(erro) => return Err(ErroGravacao::SaidaInvalida(erro.to_string())),
+            Ok(_) => restantes += 1,
+        }
+    }
     if restantes > 0 {
         return Err(ErroGravacao::SaidaMultipla(1 + restantes));
     }
@@ -76,6 +84,22 @@ mod testes {
     fn lixo_nao_e_gravavel() {
         assert!(matches!(
             documento_unico("not json"),
+            Err(ErroGravacao::SaidaInvalida(_))
+        ));
+    }
+
+    #[test]
+    fn lixo_apos_o_documento_nao_e_gravavel() {
+        assert!(matches!(
+            documento_unico("1\ngarbage"),
+            Err(ErroGravacao::SaidaInvalida(_))
+        ));
+    }
+
+    #[test]
+    fn lixo_apos_stream_valido_tambem_falha() {
+        assert!(matches!(
+            documento_unico("1\n2\nbad"),
             Err(ErroGravacao::SaidaInvalida(_))
         ));
     }
