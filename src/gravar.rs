@@ -7,6 +7,7 @@
 //! vazia não têm forma de arquivo.
 
 use std::io::{BufRead, Write};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ErroGravacao {
@@ -101,6 +102,27 @@ pub fn confirmar<R: BufRead, W: Write>(entrada: &mut R, saida: &mut W, pergunta:
         linha.trim().to_lowercase().as_str(),
         "y" | "yes" | "s" | "sim"
     )
+}
+
+/// Escreve `.tmp` no MESMO diretório (rename entre volumes não é atômico),
+/// copia o original para `.bak` e renomeia por cima. Ordem importa: se
+/// qualquer passo antes do rename falhar, o arquivo original está intacto.
+/// No Windows, `std::fs::rename` substitui destino existente (MoveFileEx
+/// com MOVEFILE_REPLACE_EXISTING) — mesmo contrato do Unix aqui.
+pub fn gravar_atomico(caminho: &Path, conteudo: &str) -> Result<PathBuf, ErroGravacao> {
+    let extensao = caminho.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let tmp = caminho.with_extension(format!("{extensao}.tmp"));
+    let bak = caminho.with_extension(format!("{extensao}.bak"));
+    std::fs::write(&tmp, conteudo)?;
+    if let Err(erro) = std::fs::copy(caminho, &bak) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(ErroGravacao::Io(erro));
+    }
+    if let Err(erro) = std::fs::rename(&tmp, caminho) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(ErroGravacao::Io(erro));
+    }
+    Ok(bak)
 }
 
 #[cfg(test)]
@@ -208,5 +230,52 @@ mod testes {
         let mut saida = Vec::new();
         confirmar(&mut entrada, &mut saida, "write changes? [y/N] ");
         assert!(String::from_utf8_lossy(&saida).contains("write changes?"));
+    }
+
+    #[test]
+    fn gravar_atomico_grava_e_deixa_bak() {
+        let dir = std::env::temp_dir().join(format!("jqc-teste-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let alvo = dir.join("doc.json");
+        std::fs::write(&alvo, "{\"antigo\":true}").expect("seed");
+        let bak = gravar_atomico(&alvo, "{\"novo\":true}\n").expect("gravar");
+        assert_eq!(
+            std::fs::read_to_string(&alvo).expect("alvo"),
+            "{\"novo\":true}\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&bak).expect("bak"),
+            "{\"antigo\":true}"
+        );
+        assert_eq!(bak, alvo.with_extension("json.bak"));
+        assert!(!dir.join("doc.json.tmp").exists(), "tmp não pode sobrar");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn gravar_atomico_sobrescreve_bak_anterior() {
+        let dir = std::env::temp_dir().join(format!("jqc-teste2-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let alvo = dir.join("doc.json");
+        std::fs::write(&alvo, "v1").expect("seed");
+        gravar_atomico(&alvo, "v2").expect("gravar 1");
+        gravar_atomico(&alvo, "v3").expect("gravar 2");
+        assert_eq!(
+            std::fs::read_to_string(alvo.with_extension("json.bak")).expect("bak"),
+            "v2"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn gravar_atomico_falha_sem_tocar_o_original_se_dir_nao_existe() {
+        let alvo = std::env::temp_dir()
+            .join("jqc-inexistente")
+            .join("x")
+            .join("doc.json");
+        assert!(matches!(
+            gravar_atomico(&alvo, "x"),
+            Err(ErroGravacao::Io(_))
+        ));
     }
 }
