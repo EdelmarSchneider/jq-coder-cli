@@ -179,6 +179,13 @@ fn rodar_repl(args: &Args) -> i32 {
             return 2;
         }
     };
+    // Erro de arquivo não pode custar 640 MB de download — mesmo invariante
+    // do modo um-comando (passo 1 de `rodar`). `Sessao::nova` revalida dentro
+    // do loop; a redundância é aceitável e mantém `rodar_sessao` autocontido.
+    if let Err(erro) = serde_json::from_str::<serde_json::Value>(&texto) {
+        eprintln!("invalid JSON in {}: {erro}", caminho.display());
+        return 2;
+    }
     let gguf = match modelo::garantir_modelo(&args.revisao, args.offline) {
         Ok(caminho) => caminho,
         Err(erro) => {
@@ -256,7 +263,11 @@ fn escrever_no_arquivo(saida: &str, caminho: &Path, documento_atual: &str, yes: 
     }
     match gravar::gravar_atomico(caminho, &proposto) {
         Ok(bak) => {
-            eprintln!("written; previous version kept at {}", bak.display());
+            if bak.exists() {
+                eprintln!("written; previous version kept at {}", bak.display());
+            } else {
+                eprintln!("written (no previous version to back up)");
+            }
             0
         }
         Err(erro) => {

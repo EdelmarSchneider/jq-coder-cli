@@ -109,12 +109,21 @@ pub fn confirmar<R: BufRead, W: Write>(entrada: &mut R, saida: &mut W, pergunta:
 /// qualquer passo antes do rename falhar, o arquivo original está intacto.
 /// No Windows, `std::fs::rename` substitui destino existente (MoveFileEx
 /// com MOVEFILE_REPLACE_EXISTING) — mesmo contrato do Unix aqui.
+///
+/// Um arquivo que sumiu no meio da sessão (apagado por outro processo, por
+/// exemplo) não pode condenar o buffer: se `caminho` não existe mais, não há
+/// o que copiar para `.bak` — seguimos direto para o rename. O `PathBuf`
+/// retornado é sempre o caminho de `.bak` que SERIA usado; o chamador deve
+/// checar `bak.exists()` antes de anunciar "versão anterior preservada em…",
+/// porque aqui ela pode não ter sido criada.
 pub fn gravar_atomico(caminho: &Path, conteudo: &str) -> Result<PathBuf, ErroGravacao> {
     let extensao = caminho.extension().and_then(|e| e.to_str()).unwrap_or("");
     let tmp = caminho.with_extension(format!("{extensao}.tmp"));
     let bak = caminho.with_extension(format!("{extensao}.bak"));
     std::fs::write(&tmp, conteudo)?;
-    if let Err(erro) = std::fs::copy(caminho, &bak) {
+    if let Err(erro) = std::fs::copy(caminho, &bak)
+        && erro.kind() != std::io::ErrorKind::NotFound
+    {
         let _ = std::fs::remove_file(&tmp);
         return Err(ErroGravacao::Io(erro));
     }
@@ -264,6 +273,24 @@ mod testes {
             std::fs::read_to_string(alvo.with_extension("json.bak")).expect("bak"),
             "v2"
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn gravar_atomico_sem_original_grava_sem_bak() {
+        // Diretório existe, mas o arquivo-alvo sumiu no meio da sessão (ex.:
+        // apagado por outro processo) — não pode condenar o buffer.
+        let dir = std::env::temp_dir().join(format!("jqc-teste-semorig-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let alvo = dir.join("doc.json");
+        assert!(!alvo.exists(), "pré-condição: alvo não existe");
+        let bak = gravar_atomico(&alvo, "{\"novo\":true}\n").expect("gravar sem original");
+        assert_eq!(
+            std::fs::read_to_string(&alvo).expect("alvo"),
+            "{\"novo\":true}\n"
+        );
+        assert!(!bak.exists(), "sem original, não deve sobrar .bak");
+        assert!(!dir.join("doc.json.tmp").exists(), "tmp não pode sobrar");
         std::fs::remove_dir_all(&dir).ok();
     }
 

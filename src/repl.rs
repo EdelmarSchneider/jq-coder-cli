@@ -140,7 +140,15 @@ where
         let _ = saida.flush();
         let mut linha = String::new();
         match entrada.read_line(&mut linha) {
-            Ok(0) | Err(_) => return 0, // EOF: encerra como :q sem pendência
+            Ok(0) | Err(_) => {
+                // EOF: ao contrário de :q, não há como reperguntar — avisa
+                // (se houver buffer não gravado) e encerra sem bloquear.
+                let atual = std::fs::read_to_string(arquivo).unwrap_or_default();
+                if sessao.alterado(&atual) {
+                    let _ = writeln!(saida, "unsaved changes discarded (EOF)");
+                }
+                return 0;
+            }
             Ok(_) => {}
         }
         let comando = parse_comando(&linha);
@@ -206,8 +214,15 @@ where
                 }
                 match gravar::gravar_atomico(arquivo, sessao.buffer_texto()) {
                     Ok(bak) => {
-                        let _ =
-                            writeln!(saida, "written; previous version kept at {}", bak.display());
+                        if bak.exists() {
+                            let _ = writeln!(
+                                saida,
+                                "written; previous version kept at {}",
+                                bak.display()
+                            );
+                        } else {
+                            let _ = writeln!(saida, "written (no previous version to back up)");
+                        }
                     }
                     Err(erro) => {
                         let _ = writeln!(saida, "{erro}");
@@ -369,5 +384,22 @@ mod testes {
         let dir = std::env::temp_dir();
         let (codigo, _) = rodar_com("", "{\"a\":1}", &dir.join("x.json"));
         assert_eq!(codigo, 0, "EOF = sessão encerrada normalmente");
+    }
+
+    #[test]
+    fn fim_de_entrada_com_buffer_nao_gravado_avisa() {
+        let dir = std::env::temp_dir().join(format!("jqc-repl-eof-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let arq = dir.join("doc.json");
+        std::fs::write(&arq, "{\"a\":3}").expect("seed");
+        // Aplica mas nunca chega em :q — a entrada acaba (EOF) com o buffer
+        // alterado e não gravado no disco.
+        let (codigo, saida) = rodar_com("dobra\n:a\n", "{\"a\":3}", &arq);
+        assert_eq!(codigo, 0);
+        assert!(
+            saida.contains("unsaved changes discarded"),
+            "saida: {saida}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
