@@ -4,6 +4,11 @@ version = "0.1.1"
 edition = "2024"
 license = "MIT"
 description = "Natural language to jq filters — 100% offline, single binary (jq-coder)"
+repository = "https://github.com/EdelmarSchneider/jq-coder-cli"
+homepage = "https://huggingface.co/DominuZ/jq-coder-0.6B"
+readme = "README.md"
+keywords = ["jq", "json", "llm", "offline", "cli"]
+categories = ["command-line-utilities"]
 
 [features]
 # vulkan é ligada nos releases Windows/Linux; macOS usa Metal (default do llama.cpp)
