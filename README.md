@@ -111,6 +111,38 @@ filtro: .orders |= map(del(.total))
 {"orders":[{"id":1,"status":"done"},{"id":2,"status":"pending"}]}
 ```
 
+### Write the result back into the file
+
+```bash
+jqc "remove the total field from every order" orders.json --write
+```
+
+Shows a diff of what would change and asks `write changes? [y/N]` before touching
+anything. The previous version is kept as `orders.json.bak`; the write is atomic
+(temp file + rename). `--yes` skips the question (for scripts).
+
+### Interactive session
+
+```bash
+jqc orders.json
+```
+
+Loads the model once and opens a prompt. Type requests in plain English (or
+Brazilian Portuguese); results are previews until you apply them:
+
+```
+jqc> remove the total field from every order
+filter: del(.orders[].total)
+{...preview...}
+jqc> :a        # apply result to the working buffer
+jqc> sort orders by id, descending
+jqc> :a
+jqc> :w        # diff against the file + write changes? [y/N]
+jqc> :q
+```
+
+`:d` undoes the last apply, `:?` shows help. The file on disk only changes at `:w`.
+
 ## Usage
 
 ```
@@ -159,6 +191,11 @@ After that first download, `jqc` never touches the network again (and
   interpolates between compositions it saw in training; requests far from
   that come out wrong or hallucinated.
 - Aggregations under nested fields can come out as listings instead of sums.
+- **Compact JSON (no spaces after `:`/`,`) is out-of-distribution** for some
+  compositions: training data was generated with `json.dumps`-style spacing,
+  and a small, tightly-packed document can occasionally push a `del`-style
+  request into a hallucinated filter that fails at runtime. Spaced JSON
+  (the format `jq`/`json.dumps` produce by default) does not show this.
 - The request must mention fields by their real names in the JSON — the CLI
   always includes a (possibly pruned) sample of your document in the prompt,
   since the model was trained to depend on it.

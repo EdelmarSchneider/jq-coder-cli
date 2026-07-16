@@ -152,6 +152,50 @@ fn argumento_de_arquivo_nao_utf8_nao_causa_panic() {
 }
 
 #[test]
+fn write_e_so_filtro_sao_mutuamente_exclusivos() {
+    Command::cargo_bin("jqc")
+        .expect("binário compilado")
+        .args(["pedido qualquer", "arquivo.json", "--write", "--so-filtro"])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("mutually exclusive"));
+}
+
+#[test]
+fn write_com_stdin_sai_com_2() {
+    Command::cargo_bin("jqc")
+        .expect("binário compilado")
+        .args(["pedido qualquer", "-", "--write"])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("stdin has nowhere to write back"));
+}
+
+#[test]
+fn yes_sem_write_sai_com_2() {
+    Command::cargo_bin("jqc")
+        .expect("binário compilado")
+        .args(["pedido qualquer", "arquivo.json", "--yes"])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains(
+            "--yes only makes sense with --write",
+        ));
+}
+
+#[test]
+fn write_com_um_so_positional_sai_com_2() {
+    Command::cargo_bin("jqc")
+        .expect("binário compilado")
+        .args(["pedido qualquer", "--write"])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains(
+            "do not apply to the interactive session",
+        ));
+}
+
+#[test]
 fn revisao_com_caractere_invalido_sai_com_2_sem_baixar() {
     let cache = tempfile::tempdir().expect("tempdir");
     let dir = tempfile::tempdir().expect("tempdir");

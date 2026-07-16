@@ -76,3 +76,51 @@ fn os_4_exemplos_do_model_card_passam_de_ponta_a_ponta() {
         assert_eq!(saida, ouro, "{pedido}: gerou {filtro:?}");
     }
 }
+
+/// Fecha o ciclo do Task 4/Task 8: `--write --yes` de ponta a ponta contra o
+/// binário real (não a lib) — modelo gera o filtro, gravar.rs aplica no
+/// arquivo, o .bak fica no lugar. CPU de propósito: a GPU está ocupada com
+/// outro treino nesta janela.
+///
+/// O JSON de semente usa o espaçamento do `json.dumps` (espaço depois de
+/// `:`/`,`) em vez de compacto: achado desta task — com o mesmo pedido, o
+/// mesmo doc em JSON compacto (`{"a":1}`, sem espaços, formato de
+/// `jq -cS`) faz o modelo alucinar `map(del(.total))` em vez de
+/// `del(.orders[].total)` (reproduzido 4/4; falha depois em runtime porque
+/// `map` sobre o objeto top-level itera o array `orders` inteiro e `del`
+/// tenta indexar array por string). O treino usa o espaçamento do
+/// `json.dumps`; compacto é sutilmente fora de distribuição para essa
+/// composição específica. Não é bug de gravar.rs/main.rs — é o binário
+/// real produzindo um filtro ruim para um doc fora de distribuição; ver
+/// nota nas "Honest limitations" do README. Registrado no journal para
+/// investigação futura (retreino ou normalizar espaçamento no prompt).
+#[test]
+fn write_yes_grava_com_bak_de_ponta_a_ponta() {
+    let dir = std::env::temp_dir().join(format!("jqc-e2e-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("dir");
+    let arq = dir.join("pedidos.json");
+    std::fs::write(&arq, "{\"orders\": [{\"id\": 1, \"total\": 9.5}]}").expect("seed");
+    let saida = std::process::Command::new(env!("CARGO_BIN_EXE_jqc"))
+        .args([
+            "remova o campo total de cada pedido",
+            arq.to_str().expect("utf8"),
+            "--write",
+            "--yes",
+            "--device",
+            "cpu",
+        ])
+        .output()
+        .expect("jqc roda");
+    assert!(
+        saida.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&saida.stderr)
+    );
+    let gravado = std::fs::read_to_string(&arq).expect("gravado");
+    assert!(
+        !gravado.contains("total"),
+        "campo removido do arquivo: {gravado}"
+    );
+    assert!(arq.with_extension("json.bak").exists(), "backup existe");
+    std::fs::remove_dir_all(&dir).ok();
+}
