@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use clap::Parser;
 
-use jqc::{executor, gravar, inferencia, modelo, prompt};
+use jqc::{executor, gravar, inferencia, modelo, prompt, repl};
 
 /// Translate a natural-language request into a jq filter and run it — offline.
 #[derive(Parser)]
@@ -64,8 +64,16 @@ fn main() {
 fn rodar(args: Args) -> i32 {
     // 0. Validações de uso: baratas, então vêm antes de qualquer I/O ou download.
     let Some(nome_arquivo) = args.arquivo.clone() else {
-        eprintln!("interactive mode lands in the next release; for now pass REQUEST and FILE");
-        return 2;
+        // Um positional só = arquivo → sessão interativa.
+        if args.so_filtro || args.write || args.yes {
+            eprintln!("--so-filtro/--write/--yes do not apply to the interactive session");
+            return 2;
+        }
+        if args.pedido == "-" {
+            eprintln!("the interactive session needs a real file (stdin is not seekable)");
+            return 2;
+        }
+        return rodar_repl(&args);
     };
     if args.write && args.so_filtro {
         eprintln!("--write and --so-filtro are mutually exclusive");
@@ -158,6 +166,64 @@ fn rodar(args: Args) -> i32 {
             1
         }
     }
+}
+
+/// Sessão interativa: modelo carregado UMA vez; geração e execução entram no
+/// loop como closures (o loop é testável sem elas — tests em repl.rs).
+fn rodar_repl(args: &Args) -> i32 {
+    let caminho = PathBuf::from(&args.pedido);
+    let texto = match std::fs::read_to_string(&caminho) {
+        Ok(texto) => texto,
+        Err(erro) => {
+            eprintln!("could not read {}: {erro}", caminho.display());
+            return 2;
+        }
+    };
+    let gguf = match modelo::garantir_modelo(&args.revisao, args.offline) {
+        Ok(caminho) => caminho,
+        Err(erro) => {
+            eprintln!("{erro}");
+            return 2;
+        }
+    };
+    let mut motor = match inferencia::carregar(&gguf, args.device) {
+        Ok(motor) => motor,
+        Err(erro) => {
+            eprintln!("{erro}");
+            return 2;
+        }
+    };
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(erro) => {
+            eprintln!("could not locate my own executable: {erro}");
+            return 2;
+        }
+    };
+    let mut gerar = |pedido: &str, amostra: &str| -> Result<String, String> {
+        let mensagens = prompt::mensagens_de_inferencia(pedido, amostra);
+        let texto = motor.gerar(&mensagens).map_err(|erro| erro.to_string())?;
+        let filtro = prompt::extrair_programa(&texto);
+        if filtro.is_empty() {
+            return Err("the model did not return a filter.".to_string());
+        }
+        Ok(filtro)
+    };
+    let executar = |filtro: &str, documento: &str| -> Result<String, String> {
+        executor::executar_com_timeout(&exe, filtro, documento, executor::TIMEOUT_PADRAO_S)
+            .map_err(|erro| erro.to_string())
+    };
+    let stdin = std::io::stdin();
+    let mut entrada = stdin.lock();
+    let mut stdout = std::io::stdout();
+    repl::rodar_sessao(
+        &mut entrada,
+        &mut stdout,
+        &caminho,
+        &texto,
+        &mut gerar,
+        &executar,
+    )
 }
 
 /// O gate do spec: valida forma, mostra diff, pergunta (a menos de --yes),
