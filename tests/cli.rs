@@ -69,6 +69,31 @@ fn saida_volumosa_atravessa_o_pipe() {
 }
 
 #[test]
+fn erro_do_filho_nao_duplica_prefixo() {
+    // Achado do teste manual do dono: o stderr do filho já É a mensagem do
+    // ErroExecutor ("the model generated a filter jq rejected: ..."); o pai
+    // reembrulhava em outro Execucao e duplicava/misturava o prefixo.
+    let resultado = jqc::executor::executar_com_timeout(
+        Path::new(env!("CARGO_BIN_EXE_jqc")),
+        "definitivamente_indefinido",
+        "null",
+        jqc::executor::TIMEOUT_PADRAO_S,
+    );
+    let erro = resultado.expect_err("filtro com função indefinida deve falhar");
+    assert!(
+        matches!(erro, jqc::executor::ErroExecutor::Compilacao(_)),
+        "erro: {erro:?}"
+    );
+    let msg = erro.to_string();
+    assert_eq!(
+        msg.matches("the model generated a filter jq rejected:")
+            .count(),
+        1,
+        "prefixo duplicado ou ausente: {msg}"
+    );
+}
+
+#[test]
 fn arquivo_ilegivel_sai_com_2_sem_baixar_modelo() {
     let cache = tempfile::tempdir().expect("tempdir");
     Command::cargo_bin("jqc")

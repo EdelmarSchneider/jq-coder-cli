@@ -26,7 +26,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use jaq_core::load::{Arena, File, Loader};
-use jaq_core::{Ctx, Vars, data};
+use jaq_core::{Ctx, Exn, Vars, data};
 use jaq_json::{Val, write};
 use wait_timeout::ChildExt;
 
@@ -82,7 +82,8 @@ pub fn executar(filtro: &str, documento: &str) -> Result<String, ErroExecutor> {
 
     let mut linhas = Vec::new();
     for resultado in filtro_compilado.id.run((ctx, entrada)) {
-        let val = resultado.map_err(|erro| ErroExecutor::Execucao(format!("{erro:?}")))?;
+        let val =
+            resultado.map_err(|erro| ErroExecutor::Execucao(formatar_erro_de_execucao(erro)))?;
         let mut bytes = Vec::new();
         write::write(&mut bytes, &pp, 0, &val)
             .map_err(|erro| ErroExecutor::Execucao(erro.to_string()))?;
@@ -172,7 +173,40 @@ pub fn executar_com_timeout(
     if status.success() {
         Ok(saida.strip_suffix('\n').unwrap_or(&saida).to_string())
     } else {
-        Err(ErroExecutor::Execucao(erro.trim().to_string()))
+        Err(classificar_erro_do_filho(erro.trim()))
+    }
+}
+
+/// O filho já fala a língua do `ErroExecutor` (seu stderr É o `Display` de um
+/// `ErroExecutor` — ver `rodar_modo_filtro`); re-embrulhar esse texto cru
+/// dentro de outro `ErroExecutor::Execucao` duplica/mistura prefixos (achado
+/// do teste manual do dono: "the filter failed at runtime: the filter failed
+/// at runtime: ..."). Em vez disso, reconhece o prefixo do filho, descasca-o
+/// e reclassifica na variante certa do pai — o texto final tem só UM prefixo.
+fn classificar_erro_do_filho(stderr_aparado: &str) -> ErroExecutor {
+    if let Some(resto) = stderr_aparado.strip_prefix("the model generated a filter jq rejected: ") {
+        ErroExecutor::Compilacao(resto.to_string())
+    } else if let Some(resto) = stderr_aparado.strip_prefix("the filter failed at runtime: ") {
+        ErroExecutor::Execucao(resto.to_string())
+    } else if let Some(resto) = stderr_aparado.strip_prefix("invalid JSON input: ") {
+        ErroExecutor::Execucao(resto.to_string())
+    } else {
+        ErroExecutor::Execucao(stderr_aparado.to_string())
+    }
+}
+
+/// `jaq_core::Exn` em Debug produz ruído tipo `Exn(Err(Error(Str([Str("cannot
+/// index "), ...]))))` — ilegível (achado do teste manual do dono).
+/// `Exn::get_err` desembrulha o caso comum (erro de execução de fato) num
+/// `jaq_core::Error<Val>`, que tem `Display` legível porque `Val` também
+/// implementa `Display` (jaq_json) — daí "cannot index "paid" with "status"".
+/// Os outros casos de `Exn` (halt, controle de fluxo interno de tail-call) não
+/// deveriam escapar pro usuário nesta chamada `.run()` de topo; se escaparem
+/// mesmo assim, o Debug entra como rede de segurança em vez de um `unwrap`.
+fn formatar_erro_de_execucao(erro: Exn<'_, Val>) -> String {
+    match erro.get_err() {
+        Ok(erro) => erro.to_string(),
+        Err(exn) => format!("{exn:?}"),
     }
 }
 
@@ -247,6 +281,49 @@ mod testes {
             executar(".foo", "42"),
             Err(ErroExecutor::Execucao(_))
         ));
+    }
+
+    #[test]
+    fn erro_de_execucao_tem_mensagem_legivel() {
+        // Achado do teste manual do dono: Debug de Exn vazava
+        // `Exn(Err(Error(Str([Str("cannot index "), ...]))))`. Com
+        // `Exn::get_err` + Display de `Error<Val>`, a mensagem lê como jq de
+        // verdade.
+        let erro = executar(".foo", "\"paid\"").expect_err("indexar string deve falhar");
+        let msg = erro.to_string();
+        assert!(msg.contains("cannot index"), "msg: {msg}");
+        assert!(!msg.contains("Exn("), "msg: {msg}");
+    }
+
+    #[test]
+    fn classifica_erro_do_filho_sem_duplicar_prefixo() {
+        let erro = classificar_erro_do_filho(
+            "the model generated a filter jq rejected: undefined filter 'gsub'",
+        );
+        assert!(matches!(erro, ErroExecutor::Compilacao(_)));
+        assert_eq!(
+            erro.to_string(),
+            "the model generated a filter jq rejected: undefined filter 'gsub'"
+        );
+
+        let erro = classificar_erro_do_filho(
+            "the filter failed at runtime: cannot index string with string \"x\"",
+        );
+        assert!(matches!(erro, ErroExecutor::Execucao(_)));
+        assert_eq!(
+            erro.to_string(),
+            "the filter failed at runtime: cannot index string with string \"x\""
+        );
+
+        let erro = classificar_erro_do_filho("invalid JSON input: EOF while parsing");
+        assert!(matches!(erro, ErroExecutor::Execucao(_)));
+
+        let erro = classificar_erro_do_filho("something else entirely");
+        assert!(matches!(erro, ErroExecutor::Execucao(_)));
+        assert_eq!(
+            erro.to_string(),
+            "the filter failed at runtime: something else entirely"
+        );
     }
 
     #[test]

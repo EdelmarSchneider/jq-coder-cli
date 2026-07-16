@@ -14,6 +14,11 @@ pub enum Comando {
     Ajuda,
     Vazio,
     Desconhecido(String),
+    /// Typo óbvio de comando (`a:`, `d:`, `w:`, `q:` ou letra solta `a`/`d`/`w`/`q`)
+    /// — achado do teste manual do dono: sem isto, esses digitados viravam
+    /// pedido em linguagem natural e o modelo alucinava um filtro para eles.
+    /// Carrega o nome do comando pretendido (ex.: "a") para a dica `:a?`.
+    Typo(String),
 }
 
 pub fn parse_comando(linha: &str) -> Comando {
@@ -24,7 +29,11 @@ pub fn parse_comando(linha: &str) -> Comando {
         ":d" => Comando::Desfazer,
         ":w" => Comando::Gravar,
         ":q" => Comando::Sair,
-        ":?" => Comando::Ajuda,
+        ":?" | "?" => Comando::Ajuda,
+        "a:" | "a" => Comando::Typo("a".to_string()),
+        "d:" | "d" => Comando::Typo("d".to_string()),
+        "w:" | "w" => Comando::Typo("w".to_string()),
+        "q:" | "q" => Comando::Typo("q".to_string()),
         _ if aparado.starts_with(':') => Comando::Desconhecido(aparado.to_string()),
         _ => Comando::Pedido(aparado.to_string()),
     }
@@ -163,6 +172,12 @@ where
             Comando::Desconhecido(qual) => {
                 let _ = writeln!(saida, "unknown command {qual} — :? for help");
             }
+            Comando::Typo(qual) => {
+                let _ = writeln!(
+                    saida,
+                    "did you mean :{qual}? (commands start with ':' — :? for help)"
+                );
+            }
             Comando::Pedido(pedido) => {
                 let amostra =
                     crate::prompt::podar_amostra(sessao.buffer_texto(), sessao.buffer_valor());
@@ -259,6 +274,22 @@ mod testes {
             parse_comando("remova o total"),
             Comando::Pedido(_)
         ));
+    }
+
+    #[test]
+    fn parse_reconhece_typos_de_comando() {
+        // Achado do teste manual do dono: `?`, `a:`, `d:`, `w:` (dois-pontos
+        // do lado errado ou faltando) e letras soltas não podem virar pedido
+        // em linguagem natural — o modelo alucina um filtro pra eles.
+        assert!(matches!(parse_comando("?"), Comando::Ajuda));
+        assert!(matches!(parse_comando("a:"), Comando::Typo(q) if q == "a"));
+        assert!(matches!(parse_comando("d:"), Comando::Typo(q) if q == "d"));
+        assert!(matches!(parse_comando("w:"), Comando::Typo(q) if q == "w"));
+        assert!(matches!(parse_comando("q:"), Comando::Typo(q) if q == "q"));
+        assert!(matches!(parse_comando("a"), Comando::Typo(q) if q == "a"));
+        assert!(matches!(parse_comando("d"), Comando::Typo(q) if q == "d"));
+        assert!(matches!(parse_comando("w"), Comando::Typo(q) if q == "w"));
+        assert!(matches!(parse_comando("q"), Comando::Typo(q) if q == "q"));
     }
 
     #[test]
@@ -377,6 +408,38 @@ mod testes {
         assert!(gravado.contains("\"a\": 6"));
         assert!(arq.with_extension("json.bak").exists());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn typo_de_comando_nao_chama_o_modelo() {
+        // Achado do teste manual do dono: "a:" ia pro modelo como pedido em
+        // linguagem natural e alucinava um filtro. Guarda: `gerar` NUNCA é
+        // chamado — o contador confirma que o desvio acontece no parse, não
+        // "depois" de já ter pago a chamada ao modelo.
+        let dir = std::env::temp_dir();
+        let mut entrada = std::io::Cursor::new(b"a:\n:q\n".to_vec());
+        let mut saida = Vec::new();
+        let chamadas = std::cell::Cell::new(0);
+        let mut gerar = |_pedido: &str, _amostra: &str| -> Result<String, String> {
+            chamadas.set(chamadas.get() + 1);
+            Ok(".".to_string())
+        };
+        let executar = |_filtro: &str, doc: &str| -> Result<String, String> { Ok(doc.to_string()) };
+        let codigo = rodar_sessao(
+            &mut entrada,
+            &mut saida,
+            &dir.join("nao-usado.json"),
+            "{\"a\":1}",
+            &mut gerar,
+            &executar,
+        );
+        let saida_str = String::from_utf8_lossy(&saida);
+        assert_eq!(codigo, 0);
+        assert!(
+            saida_str.contains("did you mean :a? (commands start with ':' — :? for help)"),
+            "saida: {saida_str}"
+        );
+        assert_eq!(chamadas.get(), 0, "gerar não deve ser chamado para typo");
     }
 
     #[test]
