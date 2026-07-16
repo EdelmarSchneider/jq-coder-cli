@@ -65,6 +65,10 @@ impl Sessao {
     }
 
     /// `:a` — o último resultado vira o buffer, SE for um documento único.
+    /// Consome `ultimo_resultado` SÓ em caso de sucesso: uma recusa (stream,
+    /// vazio, JSON inválido) mantém o resultado disponível para nova tentativa,
+    /// mas um `:a` bem-sucedido some com ele — senão um segundo `:a` sem pedido
+    /// novo reaplicaria o mesmo resultado e empilharia um undo duplicado.
     pub fn aplicar(&mut self) -> Result<(), String> {
         let Some(saida) = self.ultimo_resultado.as_deref() else {
             return Err("nothing to apply — run a request first".to_string());
@@ -76,6 +80,7 @@ impl Sessao {
             std::mem::replace(&mut self.valor, doc),
         ));
         self.texto = novo_texto;
+        self.ultimo_resultado = None;
         Ok(())
     }
 
@@ -95,6 +100,129 @@ impl Sessao {
         match serde_json::from_str::<serde_json::Value>(conteudo_arquivo) {
             Ok(doc_arquivo) => doc_arquivo != self.valor,
             Err(_) => true,
+        }
+    }
+}
+
+const AJUDA: &str = "commands: :a apply last result to the buffer · :d undo · \
+:w write buffer to the file · :q quit · :? this help\nanything else is a natural-language request";
+
+/// O loop interativo (spec §"Modo REPL"). Genérico sobre IO (`R`/`W`) e sobre
+/// as closures de geração/execução (`G`/`E`) para testar toda a lógica de
+/// comando com fakes determinísticos — sem modelo, sem subprocesso, sem
+/// terminal de verdade. `main.rs` (Task 7) chama isto com stdin/stdout reais
+/// e as closures que envolvem o motor de inferência e o executor jq/jaq.
+pub fn rodar_sessao<R, W, G, E>(
+    entrada: &mut R,
+    saida: &mut W,
+    arquivo: &std::path::Path,
+    texto_inicial: &str,
+    gerar: &mut G,
+    executar: &E,
+) -> i32
+where
+    R: std::io::BufRead,
+    W: std::io::Write,
+    G: FnMut(&str, &str) -> Result<String, String>,
+    E: Fn(&str, &str) -> Result<String, String>,
+{
+    let mut sessao = match Sessao::nova(texto_inicial.to_string()) {
+        Ok(sessao) => sessao,
+        Err(erro) => {
+            let _ = writeln!(saida, "{erro}");
+            return 2;
+        }
+    };
+    let _ = writeln!(saida, "jqc interactive — :? for help");
+    let mut avisado_de_sair = false;
+    loop {
+        let _ = write!(saida, "jqc> ");
+        let _ = saida.flush();
+        let mut linha = String::new();
+        match entrada.read_line(&mut linha) {
+            Ok(0) | Err(_) => return 0, // EOF: encerra como :q sem pendência
+            Ok(_) => {}
+        }
+        let comando = parse_comando(&linha);
+        if !matches!(comando, Comando::Sair) {
+            avisado_de_sair = false; // qualquer outra ação rearma o aviso
+        }
+        match comando {
+            Comando::Vazio => {}
+            Comando::Ajuda => {
+                let _ = writeln!(saida, "{AJUDA}");
+            }
+            Comando::Desconhecido(qual) => {
+                let _ = writeln!(saida, "unknown command {qual} — :? for help");
+            }
+            Comando::Pedido(pedido) => {
+                let amostra =
+                    crate::prompt::podar_amostra(sessao.buffer_texto(), sessao.buffer_valor());
+                match gerar(&pedido, &amostra) {
+                    Err(erro) => {
+                        let _ = writeln!(saida, "{erro}");
+                    }
+                    Ok(filtro) => {
+                        let _ = writeln!(saida, "filter: {filtro}");
+                        match executar(&filtro, sessao.buffer_texto()) {
+                            Ok(resultado) => {
+                                let _ = writeln!(saida, "{resultado}");
+                                sessao.registrar_resultado(resultado);
+                            }
+                            Err(erro) => {
+                                let _ = writeln!(saida, "{erro}");
+                            }
+                        }
+                    }
+                }
+            }
+            Comando::Aplicar => {
+                if let Err(erro) = sessao.aplicar() {
+                    let _ = writeln!(saida, "{erro}");
+                } else {
+                    let _ = writeln!(saida, "applied — buffer updated (:d to undo)");
+                }
+            }
+            Comando::Desfazer => {
+                if let Err(erro) = sessao.desfazer() {
+                    let _ = writeln!(saida, "{erro}");
+                } else {
+                    let _ = writeln!(saida, "undone");
+                }
+            }
+            Comando::Gravar => {
+                let atual = std::fs::read_to_string(arquivo).unwrap_or_default();
+                let diff = gravar::diff_resumido(&atual, sessao.buffer_texto(), 40);
+                if diff.is_empty() {
+                    let _ = writeln!(saida, "no changes — file left untouched");
+                    continue;
+                }
+                let _ = writeln!(saida, "--- {} (on disk)", arquivo.display());
+                let _ = writeln!(saida, "+++ buffer");
+                let _ = writeln!(saida, "{diff}");
+                if !gravar::confirmar(entrada, saida, "write changes? [y/N] ") {
+                    let _ = writeln!(saida, "aborted — file left untouched");
+                    continue;
+                }
+                match gravar::gravar_atomico(arquivo, sessao.buffer_texto()) {
+                    Ok(bak) => {
+                        let _ =
+                            writeln!(saida, "written; previous version kept at {}", bak.display());
+                    }
+                    Err(erro) => {
+                        let _ = writeln!(saida, "{erro}");
+                    }
+                }
+            }
+            Comando::Sair => {
+                let atual = std::fs::read_to_string(arquivo).unwrap_or_default();
+                if sessao.alterado(&atual) && !avisado_de_sair {
+                    let _ = writeln!(saida, "unsaved changes — :w to save, :q again to discard");
+                    avisado_de_sair = true;
+                    continue;
+                }
+                return 0;
+            }
         }
     }
 }
@@ -144,11 +272,102 @@ mod testes {
     }
 
     #[test]
+    fn aplicar_consome_o_resultado() {
+        let mut s = Sessao::nova("{\"a\":1}".to_string()).expect("json");
+        s.registrar_resultado("{\"a\":2}".to_string());
+        s.aplicar().expect("primeira aplicacao");
+        assert!(
+            s.aplicar().is_err(),
+            "segunda :a sem novo pedido deve falhar"
+        );
+    }
+
+    #[test]
     fn alterado_e_semantico() {
         let mut s = Sessao::nova("{\"a\":1}".to_string()).expect("json");
         assert!(!s.alterado("{ \"a\" : 1 }"), "espaçamento não é mudança");
         s.registrar_resultado("{\"a\":2}".to_string());
         s.aplicar().expect("aplicavel");
         assert!(s.alterado("{\"a\":1}"));
+    }
+
+    fn rodar_com(script: &str, texto: &str, arquivo: &std::path::Path) -> (i32, String) {
+        let mut entrada = std::io::Cursor::new(script.as_bytes().to_vec());
+        let mut saida = Vec::new();
+        // Fake determinístico: pedido "dobra" vira um filtro fixo; o executor
+        // fake devolve o documento com "a" dobrado, sem jaq nem subprocesso.
+        let mut gerar = |pedido: &str, _amostra: &str| -> Result<String, String> {
+            if pedido == "dobra" {
+                Ok(".a *= 2".to_string())
+            } else {
+                Err("unknown".to_string())
+            }
+        };
+        let executar = |_filtro: &str, doc: &str| -> Result<String, String> {
+            let v: serde_json::Value = serde_json::from_str(doc).map_err(|e| e.to_string())?;
+            let a = v["a"].as_i64().unwrap_or(0);
+            Ok(format!("{{\"a\":{}}}", a * 2))
+        };
+        let codigo = rodar_sessao(
+            &mut entrada,
+            &mut saida,
+            arquivo,
+            texto,
+            &mut gerar,
+            &executar,
+        );
+        (codigo, String::from_utf8_lossy(&saida).into_owned())
+    }
+
+    #[test]
+    fn pedido_mostra_filtro_e_resultado_sem_alterar_buffer() {
+        let dir = std::env::temp_dir();
+        let (codigo, saida) = rodar_com("dobra\n:q\n", "{\"a\":3}", &dir.join("nao-usado.json"));
+        assert_eq!(codigo, 0);
+        assert!(saida.contains("filter: .a *= 2"));
+        assert!(saida.contains("{\"a\":6}"));
+    }
+
+    #[test]
+    fn aplicar_encadeia_sobre_o_buffer_novo() {
+        let dir = std::env::temp_dir();
+        let (_, saida) = rodar_com("dobra\n:a\ndobra\n:q\n", "{\"a\":3}", &dir.join("x.json"));
+        assert!(
+            saida.contains("{\"a\":12}"),
+            "segunda dobra vê o buffer aplicado (6*2)"
+        );
+    }
+
+    #[test]
+    fn sair_com_alteracao_pendente_avisa_e_exige_segundo_q() {
+        let dir = std::env::temp_dir().join(format!("jqc-repl-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let arq = dir.join("doc.json");
+        std::fs::write(&arq, "{\"a\":3}").expect("seed");
+        let (codigo, saida) = rodar_com("dobra\n:a\n:q\n:q\n", "{\"a\":3}", &arq);
+        assert_eq!(codigo, 0);
+        assert!(saida.contains("unsaved changes"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn gravar_no_repl_escreve_com_confirmacao() {
+        let dir = std::env::temp_dir().join(format!("jqc-replw-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let arq = dir.join("doc.json");
+        std::fs::write(&arq, "{\"a\":3}").expect("seed");
+        let (codigo, _) = rodar_com("dobra\n:a\n:w\ny\n:q\n", "{\"a\":3}", &arq);
+        assert_eq!(codigo, 0);
+        let gravado = std::fs::read_to_string(&arq).expect("gravado");
+        assert!(gravado.contains("\"a\": 6"));
+        assert!(arq.with_extension("json.bak").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn fim_de_entrada_encerra_sem_panico() {
+        let dir = std::env::temp_dir();
+        let (codigo, _) = rodar_com("", "{\"a\":1}", &dir.join("x.json"));
+        assert_eq!(codigo, 0, "EOF = sessão encerrada normalmente");
     }
 }
